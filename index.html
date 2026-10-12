@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulation Ouija automatisée</title>
+<style>
+  body {
+    margin: 0; background: #14110f; color: #e8d9b5;
+    font-family: Georgia, serif; text-align: center;
+  }
+  h1 { font-size: 1.2rem; margin: 12px 0 4px; }
+  #wrap { position: relative; width: min(95vw, 760px); margin: 0 auto; }
+  canvas { width: 100%; border-radius: 12px; background: #2a1e14;
+           box-shadow: 0 0 30px #000; touch-action: none; }
+  .btns { margin: 12px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  button {
+    background: #3b2a1a; color: #e8d9b5; border: 1px solid #8a6a3b;
+    padding: 12px 16px; font-size: 1rem; border-radius: 8px; cursor: pointer;
+  }
+  button:active { background: #5a3f22; }
+  #bubble { margin: 8px; min-height: 1.5em; font-size: 1.2rem; letter-spacing: 4px; }
+  .opt { font-size: .85rem; opacity: .85; }
+  input[type=text] { background:#2a1e14; color:#e8d9b5; border:1px solid #8a6a3b;
+    padding:8px; border-radius:6px; width:110px; text-transform:uppercase; }
+</style>
+</head>
+<body>
+<h1>👻 Simulation Ouija – Chariot XY sous la table</h1>
+
+<div id="wrap">
+  <canvas id="c" width="760" height="500"></canvas>
+</div>
+
+<div id="bubble"></div>
+
+<div class="btns">
+  <button id="b1">🔘 Bouton 1 : OUI</button>
+  <button id="b2">🔘 Bouton 2 : mot secret</button>
+  <button id="b3">NON</button>
+  <button id="b4">AU REVOIR</button>
+</div>
+
+<div class="opt">
+  Mot secret :
+  <input type="text" id="mot" value="TREIZE" maxlength="12">
+  &nbsp;
+  <label><input type="checkbox" id="vue" checked> Voir le mécanisme caché</label>
+  &nbsp;
+  <label><input type="checkbox" id="tremble" checked> Effet « tremblement »</label>
+</div>
+
+<script>
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+
+// ---------- Positions sur la planche ----------
+const CENTRE = {x: W/2, y: 330};
+const OUI = {x: 140, y: 85};
+const NON = {x: W-140, y: 85};
+const BYE = {x: W/2, y: H-45};
+
+const lettres = {};
+// Arc 1 : A-M
+for (let i = 0; i < 13; i++) {
+  const t = i / 12;
+  lettres[String.fromCharCode(65+i)] = {
+    x: 110 + t*(W-220),
+    y: 175 + Math.sin(t*Math.PI)*-35
+  };
+}
+// Arc 2 : N-Z
+for (let i = 0; i < 13; i++) {
+  const t = i / 12;
+  lettres[String.fromCharCode(78+i)] = {
+    x: 110 + t*(W-220),
+    y: 245 + Math.sin(t*Math.PI)*-35
+  };
+}
+
+// ---------- État du système ----------
+const chariot = {x: CENTRE.x, y: CENTRE.y, vx: 0, vy: 0}; // moteurs
+const planchette = {x: CENTRE.x, y: CENTRE.y};            // visible
+let cible = {x: CENTRE.x, y: CENTRE.y};
+let queue = [];     // file d'actions
+let pause = 0;
+let texte = '';
+let busy = false;
+
+// ---------- Séquences ----------
+function goTo(p, wait = 1.2, lettre = null) {
+  queue.push({p, wait, lettre});
+}
+function lancer(fn) {
+  if (busy) return;
+  busy = true; texte = ''; document.getElementById('bubble').textContent = '';
+  fn();
+  goTo(CENTRE, 0);
+}
+
+document.getElementById('b1').onclick = () => lancer(() => goTo(OUI, 2));
+document.getElementById('b3').onclick = () => lancer(() => goTo(NON, 2));
+document.getElementById('b4').onclick = () => lancer(() => goTo(BYE, 2));
+document.getElementById('b2').onclick = () => lancer(() => {
+  const mot = document.getElementById('mot').value.toUpperCase().replace(/[^A-Z]/g,'');
+  for (const l of mot) goTo(lettres[l], 1.3, l);
+});
+
+// ---------- Boucle physique ----------
+let t0 = performance.now();
+function step(now) {
+  const dt = Math.min((now - t0)/1000, 0.05);
+  t0 = now;
+
+  // Prochaine action
+  if (pause > 0) pause -= dt;
+  else if (queue.length && !cible.actif) {
+    const a = queue.shift();
+    cible = {x: a.p.x, y: a.p.y, wait: a.wait, lettre: a.lettre, actif: true};
+  }
+
+  // Moteurs pas à pas : accélération/décélération douce
+  if (cible.actif) {
+    const dx = cible.x - chariot.x, dy = cible.y - chariot.y;
+    const dist = Math.hypot(dx, dy);
+    const vmax = 170, acc = 320;
+    const v = Math.hypot(chariot.vx, chariot.vy);
+    const freinage = v*v / (2*acc);
+    let ax = 0, ay = 0;
+    if (dist > 0.5) {
+      const k = dist > freinage ? 1 : -1;
+      ax = dx/dist * acc * (dist > freinage ? 1 : 0);
+      ay = dy/dist * acc * (dist > freinage ? 1 : 0);
+      if (dist <= freinage) { chariot.vx *= 0.90; chariot.vy *= 0.90; }
+    }
+    chariot.vx += ax*dt; chariot.vy += ay*dt;
+    const nv = Math.hypot(chariot.vx, chariot.vy);
+    if (nv > vmax) { chariot.vx *= vmax/nv; chariot.vy *= vmax/nv; }
+    chariot.x += chariot.vx*dt; chariot.y += chariot.vy*dt;
+
+    if (dist < 2.5 && nv < 25) {
+      chariot.x = cible.x; chariot.y = cible.y; chariot.vx = chariot.vy = 0;
+      cible.actif = false; pause = cible.wait;
+      if (cible.lettre) {
+        texte += cible.lettre;
+        document.getElementById('bubble').textContent = texte;
+      }
+      if (!queue.length) busy = false;
+    }
+  }
+
+  // Planchette : suit l'aimant avec un léger retard (friction / ressort)
+  const k = 9;
+  planchette.x += (chariot.x - planchette.x) * Math.min(1, k*dt);
+  planchette.y += (chariot.y - planchette.y) * Math.min(1, k*dt);
+
+  draw(now/1000);
+  requestAnimationFrame(step);
+}
+
+// ---------- Dessin ----------
+function draw(t) {
+  ctx.clearRect(0, 0, W, H);
+
+  // Planche en bois
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#6b4a2b'); g.addColorStop(1, '#4a3019');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // Veines du bois
+  ctx.strokeStyle = 'rgba(0,0,0,.12)';
+  for (let y = 10; y < H; y += 14) {
+    ctx.beginPath(); ctx.moveTo(0, y);
+    ctx.bezierCurveTo(W*.3, y+4, W*.6, y-4, W, y+2); ctx.stroke();
+  }
+
+  // Cadre
+  ctx.strokeStyle = '#d9b97a'; ctx.lineWidth = 3;
+  ctx.strokeRect(14, 14, W-28, H-28);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(22, 22, W-44, H-44);
+
+  // Textes de la planche
+  ctx.fillStyle = '#e8d3a0';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 30px Georgia';
+  ctx.fillText('OUI', OUI.x, OUI.y);
+  ctx.fillText('NON', NON.x, NON.y);
+  ctx.font = 'bold 22px Georgia';
+  ctx.fillText('AU REVOIR', BYE.x, BYE.y);
+  ctx.font = 'bold 24px Georgia';
+  for (const l in lettres) ctx.fillText(l, lettres[l].x, lettres[l].y - 18);
+
+  ctx.font = '16px Georgia';
+  ctx.fillText('0 1 2 3 4 5 6 7 8 9', W/2, 300 + 55);
+
+  // Soleil & lune décoratifs
+  ctx.font = '28px serif';
+  ctx.fillText('☀', 60, 60); ctx.fillText('☾', W-60, 60);
+
+  // --- Vue du mécanisme caché ---
+  if (document.getElementById('vue').checked) {
+    ctx.save();
+    ctx.globalAlpha = .55;
+    // Rails
+    ctx.strokeStyle = '#7fd1ff'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(30, chariot.y); ctx.lineTo(W-30, chariot.y); ctx.stroke(); // axe X
+    ctx.strokeStyle = '#ffb35c';
+    ctx.beginPath(); ctx.moveTo(chariot.x, 30); ctx.lineTo(chariot.x, H-30); ctx.stroke(); // axe Y
+    // Moteurs
+    ctx.fillStyle = '#7fd1ff'; ctx.fillRect(14, chariot.y-9, 14, 18);
+    ctx.fillStyle = '#ffb35c'; ctx.fillRect(chariot.x-9, 14, 18, 14);
+    // Chariot + aimant
+    ctx.fillStyle = '#ff4d4d';
+    ctx.beginPath(); ctx.arc(chariot.x, chariot.y, 11, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif';
+    ctx.fillText('aimant', chariot.x, chariot.y + 22);
+    ctx.restore();
+  }
+
+  // --- Planchette ---
+  let px = planchette.x, py = planchette.y;
+  if (document.getElementById('tremble').checked && cible.actif) {
+    px += Math.sin(t*40) * 0.7;
+    py += Math.cos(t*47) * 0.7;
+  }
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 6;
+  ctx.fillStyle = '#c99a52';
+  ctx.beginPath();
+  ctx.moveTo(0, -48);
+  ctx.bezierCurveTo(38, -20, 48, 20, 28, 40);
+  ctx.quadraticCurveTo(0, 55, -28, 40);
+  ctx.bezierCurveTo(-48, 20, -38, -20, 0, -48);
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = '#5a3a14'; ctx.lineWidth = 2; ctx.stroke();
+  // Fenêtre transparente
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  ctx.beginPath(); ctx.arc(0, -8, 14, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+requestAnimationFrame(step);
+</script>
+</body>
+</html>
